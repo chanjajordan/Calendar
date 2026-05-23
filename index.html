@@ -287,10 +287,20 @@ const SG_FIXED=[ // [monthIdx0, day, name]
  [0,1,'New Year'],[4,1,'Labour Day'],[7,9,'National Day'],[11,25,'Christmas']
 ];
 // variable/lunar PH per year (confirmed only). [dateStr, name]
+// NOTE: 2027+ contain CNY only (from prokerala). Other lunar PH (Hari Raya, Vesak,
+// Deepavali) NOT yet added — await MOM official release. Fixed PH still auto-compute.
 const SG_VAR={
  2026:[['2026-02-17','CNY'],['2026-02-18','CNY'],['2026-03-21','Hari Raya Puasa'],
-       ['2026-05-27','Hari Raya Haji'],['2026-05-31','Vesak Day'],['2026-11-08','Deepavali']]
+       ['2026-05-27','Hari Raya Haji'],['2026-05-31','Vesak Day'],['2026-11-08','Deepavali']],
+ 2027:[['2027-02-06','CNY'],['2027-02-07','CNY']],
+ 2028:[['2028-01-26','CNY'],['2028-01-27','CNY']],
+ 2029:[['2029-02-13','CNY'],['2029-02-14','CNY']],
+ 2030:[['2030-02-03','CNY'],['2030-02-04','CNY']],
+ 2031:[['2031-01-23','CNY'],['2031-01-24','CNY']],
+ 2032:[['2032-02-11','CNY'],['2032-02-12','CNY']]
 };
+// years whose lunar set is FULLY confirmed (all PH, not just CNY)
+const SG_FULL_YEARS={2026:true};
 // MOE school vacations per year: {ranges:[[start,end,name]], days:[[date,name]]}
 const SG_SCH_BY_YEAR={
  2026:{ranges:[['2026-03-14','2026-03-22','Mar break'],['2026-05-30','2026-06-28','June holidays'],
@@ -315,7 +325,7 @@ function holMap(year){
    mon.setDate(d.getDate()+1);const mk=fmt(mon);if(!m[mk])m[mk]=n+' (lieu)';}});
  _holCache[year]=m;return m;
 }
-function hasVarData(year){return !!SG_VAR[year];}  // lunar holidays confirmed?
+function hasVarData(year){return !!SG_FULL_YEARS[year];}  // ALL lunar PH confirmed?
 
 /* ====================== STATE ====================== */
 let state=load();
