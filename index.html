@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>My Diary Planner</title>
+<script src="https://apis.google.com/js/api.js" async defer></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
     --paper:#fdfbf3;
@@ -234,7 +236,19 @@
       <input type="file" id="impFile" accept=".ics" style="display:none">
       <button class="ghost" id="expBtn">📤 Export my events (.ics) to iPhone</button>
       <button class="ghost" id="subBtn">🔗 Get holiday subscription link (.ics)</button>
-      <button class="ghost" id="clrBtn" style="color:#c66;border-color:#ecc">🗑 Clear all my events</button>
+      <div style="margin:14px 0 4px;border-top:2px dashed var(--line);padding-top:10px;">
+        <div style="font-family:system-ui;font-size:13px;font-weight:700;color:#7a5a66;margin-bottom:6px;">☁ Google Calendar auto-sync</div>
+        <div style="font-family:system-ui;font-size:11px;color:#aa9;margin-bottom:8px;line-height:1.4;">
+          Sign in once → events sync to Google → iPhone Calendar auto-mirrors. Paste your OAuth Client ID (see setup notes).</div>
+        <div class="fld"><label>Google OAuth Client ID</label>
+          <input id="gClientId" placeholder="xxxx.apps.googleusercontent.com" style="font-size:11px"></div>
+        <div id="gStatus" style="font-family:system-ui;font-size:11px;color:#988;margin-bottom:6px;">Status: not connected</div>
+        <button class="ghost" id="gSignIn">🔓 Connect Google</button>
+        <button class="ghost" id="gPush" style="display:none">⬆ Push my events → Google</button>
+        <button class="ghost" id="gPull" style="display:none">⬇ Pull Google → app</button>
+        <button class="ghost" id="gSignOut" style="display:none;color:#c66;border-color:#ecc">Disconnect</button>
+      </div>
+      <button class="ghost" id="clrBtn" style="color:#c66;border-color:#ecc;margin-top:10px">🗑 Clear all my events</button>
     </div>
   </div>
 </div>
@@ -441,8 +455,90 @@ function importICS(file){const r=new FileReader();
 
 /* ====================== SETTINGS ====================== */
 function openSet(){document.getElementById('setOv').classList.add('show');
-  tHol.checked=state.set.hol;tSch.checked=state.set.sch;tSync.checked=state.set.sync;}
+  tHol.checked=state.set.hol;tSch.checked=state.set.sch;tSync.checked=state.set.sync;
+  if(state.set.gClientId)gClientId.value=state.set.gClientId;}
 function closeSet(){document.getElementById('setOv').classList.remove('show');}
+
+/* ====================== GOOGLE CALENDAR SYNC ====================== */
+const GAPI_SCOPE='https://www.googleapis.com/auth/calendar.events';
+let gTokenClient=null,gToken=null,gReady=false;
+function gLog(m){const s=document.getElementById('gStatus');if(s)s.textContent='Status: '+m;}
+function gToggleBtns(on){
+  gSignIn.style.display=on?'none':'block';
+  gPush.style.display=gPull.style.display=gSignOut.style.display=on?'block':'none';
+}
+function gInitClient(){
+  // gapi client load (REST calls)
+  if(typeof gapi==='undefined'){toast('Google scripts still loading, retry');return false;}
+  gapi.load('client',async()=>{
+    await gapi.client.init({discoveryDocs:['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest']});
+    gReady=true;
+  });
+  return true;
+}
+function gConnect(){
+  const cid=(gClientId.value||'').trim();
+  if(!cid){toast('Paste your OAuth Client ID first');return;}
+  if(typeof google==='undefined'||!google.accounts){toast('Google script not ready, retry in a sec');return;}
+  state.set.gClientId=cid;save();
+  if(!gReady)gInitClient();
+  gTokenClient=google.accounts.oauth2.initTokenClient({
+    client_id:cid,scope:GAPI_SCOPE,
+    callback:(resp)=>{
+      if(resp.error){gLog('auth failed');toast('Auth failed: '+resp.error);return;}
+      gToken=resp.access_token;gapi.client.setToken({access_token:gToken});
+      gLog('connected ✓');gToggleBtns(true);toast('Google connected ✓');
+    }
+  });
+  gTokenClient.requestAccessToken({prompt:'consent'});
+}
+function gDisconnect(){
+  if(gToken&&google.accounts)google.accounts.oauth2.revoke(gToken,()=>{});
+  gToken=null;gLog('not connected');gToggleBtns(false);toast('Disconnected');
+}
+function toRFC(date,time){ // returns object for Google API
+  if(!time)return {date:date};
+  return {dateTime:date+'T'+time+':00',timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone};
+}
+async function gPushEvents(){
+  if(!gToken){toast('Connect first');return;}
+  if(!gReady){toast('Client not ready, retry');return;}
+  let ok=0,fail=0;
+  for(const e of state.events){
+    const body={summary:e.title,location:e.loc||'',description:e.note||'',
+      start:e.allDay?toRFC(e.date):toRFC(e.date,e.start||'09:00'),
+      end:e.allDay?toRFC(allDayEnd(e.date)):toRFC(e.date,e.end||e.start||'10:00')};
+    try{
+      if(e.gid){await gapi.client.calendar.events.update({calendarId:'primary',eventId:e.gid,resource:body});}
+      else{const r=await gapi.client.calendar.events.insert({calendarId:'primary',resource:body});
+        e.gid=r.result.id;}
+      ok++;
+    }catch(err){fail++;}
+  }
+  save();toast('Pushed '+ok+' to Google'+(fail?(', '+fail+' failed'):' ✓'));
+}
+function allDayEnd(date){const d=parse(date);d.setDate(d.getDate()+1);return fmt(d);}
+async function gPullEvents(){
+  if(!gToken){toast('Connect first');return;}
+  if(!gReady){toast('Client not ready, retry');return;}
+  try{
+    const r=await gapi.client.calendar.events.list({calendarId:'primary',
+      timeMin:new Date(2026,0,1).toISOString(),timeMax:new Date(2026,11,31).toISOString(),
+      singleEvents:true,maxResults:500});
+    let added=0;
+    for(const it of (r.result.items||[])){
+      if(state.events.some(e=>e.gid===it.id))continue; // skip already-synced
+      const allDay=!!it.start.date;
+      const date=allDay?it.start.date:it.start.dateTime.slice(0,10);
+      const start=allDay?'':it.start.dateTime.slice(11,16);
+      const end=allDay?'':(it.end.dateTime?it.end.dateTime.slice(11,16):'');
+      state.events.push({id:'g'+Date.now()+added,gid:it.id,title:it.summary||'(no title)',
+        date,allDay,start,end,color:'blue',loc:it.location||'',note:it.description||''});
+      added++;
+    }
+    save();render();toast('Pulled '+added+' new from Google ✓');
+  }catch(err){toast('Pull failed');}
+}
 
 /* ====================== UI WIRING ====================== */
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');
@@ -468,6 +564,11 @@ subBtn.onclick=exportHolidays;
 impBtn.onclick=()=>impFile.click();
 impFile.onchange=e=>{if(e.target.files[0])importICS(e.target.files[0]);e.target.value='';};
 clrBtn.onclick=()=>{if(confirm('Delete ALL your events? Holidays stay.')){state.events=[];save();render();toast('Cleared');}};
+// Google sync wiring
+gSignIn.onclick=gConnect;
+gSignOut.onclick=gDisconnect;
+gPush.onclick=gPushEvents;
+gPull.onclick=gPullEvents;
 // double-tap detail to edit first event / open add
 detail.ondblclick=()=>{const e=state.events.find(x=>x.date===selKey);if(e)openEvent(e.id);else openEvent(null);};
 
